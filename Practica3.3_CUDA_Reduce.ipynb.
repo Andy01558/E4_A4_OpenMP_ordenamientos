@@ -1,0 +1,306 @@
+{
+  "nbformat": 4,
+  "nbformat_minor": 0,
+  "metadata": {
+    "colab": {
+      "provenance": [],
+      "gpuType": "T4",
+      "authorship_tag": "ABX9TyMUbZCKrIxtE6ZUhmy7UZDP",
+      "include_colab_link": true
+    },
+    "kernelspec": {
+      "name": "python3",
+      "display_name": "Python 3"
+    },
+    "language_info": {
+      "name": "python"
+    },
+    "accelerator": "GPU"
+  },
+  "cells": [
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "view-in-github",
+        "colab_type": "text"
+      },
+      "source": [
+        "<a href=\"https://colab.research.google.com/github/Andy01558/E4_A4_OpenMP_ordenamientos/blob/main/Practica3.3_CUDA_Reduce.ipynb.\" target=\"_parent\"><img src=\"https://colab.research.google.com/assets/colab-badge.svg\" alt=\"Open In Colab\"/></a>"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "%%writefile practica3_3.cu\n",
+        "#include <cstdio>\n",
+        "#include <cstdlib>\n",
+        "#include <cuda_runtime.h>\n",
+        "#include <ctime>\n",
+        "\n",
+        "// =====================================================\n",
+        "// KERNELS\n",
+        "// =====================================================\n",
+        "__global__ void sumarArreglos(int* A, int* B, int* C, int N, bool verbose) {\n",
+        "    int globalIdx = blockIdx.x * blockDim.x + threadIdx.x;\n",
+        "    if (globalIdx < N) {\n",
+        "        C[globalIdx] = A[globalIdx] + B[globalIdx];\n",
+        "        if (verbose && globalIdx % 5 == 0) {\n",
+        "            printf(\"[DEVICE] [Equipo: COLAB] [Bloque CUDA: %d] [Hilo CUDA: %d] [Indice Global: %d] [Operacion: Suma] -> %d\\n\", blockIdx.x, threadIdx.x, globalIdx, C[globalIdx]);\n",
+        "        }\n",
+        "    }\n",
+        "}\n",
+        "\n",
+        "__global__ void reduccionSumatoria(int* A, int* resultadosParciales, int N, bool verbose) {\n",
+        "    extern __shared__ int sdata[];\n",
+        "    unsigned int tid = threadIdx.x;\n",
+        "    unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;\n",
+        "    sdata[tid] = (i < N) ? A[i] : 0;\n",
+        "    __syncthreads();\n",
+        "\n",
+        "    for (unsigned int s = blockDim.x / 2; s > 0; s >>= 1) {\n",
+        "        if (tid < s) sdata[tid] += sdata[tid + s];\n",
+        "        __syncthreads();\n",
+        "    }\n",
+        "\n",
+        "    if (tid == 0) {\n",
+        "        resultadosParciales[blockIdx.x] = sdata[0];\n",
+        "        if (verbose) {\n",
+        "            printf(\"[DEVICE] [Equipo: COLAB] [Bloque CUDA: %d] [Hilo CUDA: %d] [Operacion: Reduccion Suma Local] -> Parcial: %d\\n\", blockIdx.x, tid, sdata[0]);\n",
+        "        }\n",
+        "    }\n",
+        "}\n",
+        "\n",
+        "__global__ void reduccionMaximo(int* A, int* resultadosParciales, int N, bool verbose) {\n",
+        "    extern __shared__ int sdata[];\n",
+        "    unsigned int tid = threadIdx.x;\n",
+        "    unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;\n",
+        "    sdata[tid] = (i < N) ? A[i] : -999999999;\n",
+        "    __syncthreads();\n",
+        "\n",
+        "    for (unsigned int s = blockDim.x / 2; s > 0; s >>= 1) {\n",
+        "        if (tid < s) {\n",
+        "            if (sdata[tid + s] > sdata[tid]) sdata[tid] = sdata[tid + s];\n",
+        "        }\n",
+        "        __syncthreads();\n",
+        "    }\n",
+        "\n",
+        "    if (tid == 0) {\n",
+        "        resultadosParciales[blockIdx.x] = sdata[0];\n",
+        "        if (verbose) {\n",
+        "            printf(\"[DEVICE] [Equipo: COLAB] [Bloque CUDA: %d] [Hilo CUDA: %d] [Operacion: Reduccion Maximo Local] -> Parcial: %d\\n\", blockIdx.x, tid, sdata[0]);\n",
+        "        }\n",
+        "    }\n",
+        "}\n",
+        "\n",
+        "__global__ void reduccionMinimo(int* A, int* resultadosParciales, int N, bool verbose) {\n",
+        "    extern __shared__ int sdata[];\n",
+        "    unsigned int tid = threadIdx.x;\n",
+        "    unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;\n",
+        "    sdata[tid] = (i < N) ? A[i] : 999999999;\n",
+        "    __syncthreads();\n",
+        "\n",
+        "    for (unsigned int s = blockDim.x / 2; s > 0; s >>= 1) {\n",
+        "        if (tid < s) {\n",
+        "            if (sdata[tid + s] < sdata[tid]) sdata[tid] = sdata[tid + s];\n",
+        "        }\n",
+        "        __syncthreads();\n",
+        "    }\n",
+        "\n",
+        "    if (tid == 0) {\n",
+        "        resultadosParciales[blockIdx.x] = sdata[0];\n",
+        "        if (verbose) {\n",
+        "            printf(\"[DEVICE] [Equipo: COLAB] [Bloque CUDA: %d] [Hilo CUDA: %d] [Operacion: Reduccion Minimo Local] -> Parcial: %d\\n\", blockIdx.x, tid, sdata[0]);\n",
+        "        }\n",
+        "    }\n",
+        "}\n",
+        "\n",
+        "// =====================================================\n",
+        "// MAIN\n",
+        "// =====================================================\n",
+        "int main() {\n",
+        "    FILE* logFile = fopen(\"log_ejecucion_cuda.txt\", \"w\");\n",
+        "    fprintf(logFile, \"=====================================================\\n\");\n",
+        "    fprintf(logFile, \"INICIO - PRACTICA 3.3 REDUCE CUDA\\n\");\n",
+        "    fprintf(logFile, \"[ZARATE CASTILLO ANDREA ITZEL]\\n\");\n",
+        "    fprintf(logFile, \"[MARIN PUGA ULISES ISRAEL]\\n\");\n",
+        "    fprintf(logFile, \"=====================================================\\n\");\n",
+        "\n",
+        "    printf(\"=====================================================\\n\");\n",
+        "    printf(\"INICIO - PRACTICA 3.3 REDUCE CUDA\\n\");\n",
+        "    printf(\"[ZARATE CASTILLO ANDREA ITZEL]\\n\");\n",
+        "    printf(\"[MARIN PUGA ULISES ISRAEL]\\n\");\n",
+        "    printf(\"=====================================================\\n\");\n",
+        "\n",
+        "    int N = 4000000;\n",
+        "    int threadsPerBlock = 256;\n",
+        "    int numBlocks = (N + threadsPerBlock - 1) / threadsPerBlock;\n",
+        "    size_t bytes = N * sizeof(int);\n",
+        "\n",
+        "    int *h_A = new int[N], *h_B = new int[N];\n",
+        "    for (int i = 0; i < N; i++) { h_A[i] = i + 1; h_B[i] = (i + 1) * 2; }\n",
+        "\n",
+        "    int *d_A, *d_B, *d_C, *d_parciales;\n",
+        "    cudaMalloc(&d_A, bytes); cudaMalloc(&d_B, bytes); cudaMalloc(&d_C, bytes);\n",
+        "    cudaMalloc(&d_parciales, numBlocks * sizeof(int));\n",
+        "    cudaMemcpy(d_A, h_A, bytes, cudaMemcpyHostToDevice);\n",
+        "    cudaMemcpy(d_B, h_B, bytes, cudaMemcpyHostToDevice);\n",
+        "\n",
+        "    printf(\"[HOST] [Equipo: COLAB] Iniciando operaciones con N=%d...\\n\\n\", N);\n",
+        "\n",
+        "    // 1. Suma\n",
+        "    printf(\"--- EJECUTANDO SUMA ---\\n\");\n",
+        "    sumarArreglos<<<numBlocks, threadsPerBlock>>>(d_A, d_B, d_C, N, false);\n",
+        "    cudaDeviceSynchronize();\n",
+        "\n",
+        "    // 2. Reduccion Sumatoria\n",
+        "    printf(\"\\n--- EJECUTANDO REDUCCION (SUMATORIA) ---\\n\");\n",
+        "    cudaEvent_t start, stop; cudaEventCreate(&start); cudaEventCreate(&stop);\n",
+        "    cudaEventRecord(start);\n",
+        "    reduccionSumatoria<<<numBlocks, threadsPerBlock, threadsPerBlock * sizeof(int)>>>(d_A, d_parciales, N, false);\n",
+        "    cudaDeviceSynchronize();\n",
+        "    cudaEventRecord(stop); cudaEventSynchronize(stop);\n",
+        "    float ms = 0; cudaEventElapsedTime(&ms, start, stop);\n",
+        "\n",
+        "    int* h_parciales = new int[numBlocks];\n",
+        "    cudaMemcpy(h_parciales, d_parciales, numBlocks * sizeof(int), cudaMemcpyDeviceToHost);\n",
+        "    int sumaGlobal = 0;\n",
+        "    for (int i = 0; i < numBlocks; i++) sumaGlobal += h_parciales[i];\n",
+        "    printf(\"[HOST] [Equipo: COLAB] Tiempo de Reduccion (Kernel): %.4f ms\\n\", ms);\n",
+        "    printf(\"[HOST] [Equipo: COLAB] Resultado global (Sumatoria): %d\\n\", sumaGlobal);\n",
+        "\n",
+        "    // 3. Reduccion Maximo\n",
+        "    printf(\"\\n--- EJECUTANDO REDUCCION (MAXIMO) ---\\n\");\n",
+        "    reduccionMaximo<<<numBlocks, threadsPerBlock, threadsPerBlock * sizeof(int)>>>(d_A, d_parciales, N, false);\n",
+        "    cudaDeviceSynchronize();\n",
+        "    cudaMemcpy(h_parciales, d_parciales, numBlocks * sizeof(int), cudaMemcpyDeviceToHost);\n",
+        "    int maxGlobal = -999999999;\n",
+        "    for (int i = 0; i < numBlocks; i++) if (h_parciales[i] > maxGlobal) maxGlobal = h_parciales[i];\n",
+        "    printf(\"[HOST] [Equipo: COLAB] Resultado global (Maximo): %d\\n\", maxGlobal);\n",
+        "\n",
+        "    // 4. Reduccion Minimo\n",
+        "    printf(\"\\n--- EJECUTANDO REDUCCION (MINIMO) ---\\n\");\n",
+        "    reduccionMinimo<<<numBlocks, threadsPerBlock, threadsPerBlock * sizeof(int)>>>(d_A, d_parciales, N, false);\n",
+        "    cudaDeviceSynchronize();\n",
+        "    cudaMemcpy(h_parciales, d_parciales, numBlocks * sizeof(int), cudaMemcpyDeviceToHost);\n",
+        "    int minGlobal = 999999999;\n",
+        "    for (int i = 0; i < numBlocks; i++) if (h_parciales[i] < minGlobal) minGlobal = h_parciales[i];\n",
+        "    printf(\"[HOST] [Equipo: COLAB] Resultado global (Minimo): %d\\n\", minGlobal);\n",
+        "\n",
+        "    fprintf(logFile, \"=====================================================\\n\");\n",
+        "    fprintf(logFile, \"FIN - PRACTICA 3.3 REDUCE CUDA\\n\");\n",
+        "    fprintf(logFile, \"[ZARATE CASTILLO ANDREA ITZEL]\\n\");\n",
+        "    fprintf(logFile, \"[MARIN PUGA ULISES ISRAEL]\\n\");\n",
+        "    fprintf(logFile, \"=====================================================\\n\");\n",
+        "    fclose(logFile);\n",
+        "\n",
+        "    printf(\"\\n=====================================================\\n\");\n",
+        "    printf(\"FIN - PRACTICA 3.3 REDUCE CUDA\\n\");\n",
+        "    printf(\"[ZARATE CASTILLO ANDREA ITZEL]\\n\");\n",
+        "    printf(\"[MARIN PUGA ULISES ISRAEL]\\n\");\n",
+        "    printf(\"=====================================================\\n\");\n",
+        "\n",
+        "    cudaFree(d_A); cudaFree(d_B); cudaFree(d_C); cudaFree(d_parciales);\n",
+        "    delete[] h_A; delete[] h_B; delete[] h_parciales;\n",
+        "\n",
+        "    return 0;\n",
+        "}"
+      ],
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/"
+        },
+        "id": "YBQTfO1BtZbI",
+        "outputId": "adbf378a-af20-4695-d88e-461201835522"
+      },
+      "execution_count": 12,
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "Overwriting practica3_3.cu\n"
+          ]
+        }
+      ]
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "!nvcc practica3_3.cu -o practica3_3\n",
+        "!./practica3_3"
+      ],
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/"
+        },
+        "id": "ansAdTf7ta4f",
+        "outputId": "a9237138-286e-45e6-85ad-7400bd880d8a"
+      },
+      "execution_count": 13,
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "=====================================================\n",
+            "INICIO - PRACTICA 3.3 REDUCE CUDA\n",
+            "[ZARATE CASTILLO ANDREA ITZEL]\n",
+            "[MARIN PUGA ULISES ISRAEL]\n",
+            "=====================================================\n",
+            "[HOST] [Equipo: COLAB] Iniciando operaciones con N=4000000...\n",
+            "\n",
+            "--- EJECUTANDO SUMA ---\n",
+            "\n",
+            "--- EJECUTANDO REDUCCION (SUMATORIA) ---\n",
+            "[HOST] [Equipo: COLAB] Tiempo de Reduccion (Kernel): 0.2656 ms\n",
+            "[HOST] [Equipo: COLAB] Resultado global (Sumatoria): -1522072448\n",
+            "\n",
+            "--- EJECUTANDO REDUCCION (MAXIMO) ---\n",
+            "[HOST] [Equipo: COLAB] Resultado global (Maximo): 4000000\n",
+            "\n",
+            "--- EJECUTANDO REDUCCION (MINIMO) ---\n",
+            "[HOST] [Equipo: COLAB] Resultado global (Minimo): 1\n",
+            "\n",
+            "=====================================================\n",
+            "FIN - PRACTICA 3.3 REDUCE CUDA\n",
+            "[ZARATE CASTILLO ANDREA ITZEL]\n",
+            "[MARIN PUGA ULISES ISRAEL]\n",
+            "=====================================================\n"
+          ]
+        }
+      ]
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "!cat log_ejecucion_cuda.txt"
+      ],
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/"
+        },
+        "id": "ZNEer1i90EG8",
+        "outputId": "28a8b4e8-4507-445a-e7b9-82aa4ebe0a17"
+      },
+      "execution_count": 14,
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "=====================================================\n",
+            "INICIO - PRACTICA 3.3 REDUCE CUDA\n",
+            "[ZARATE CASTILLO ANDREA ITZEL]\n",
+            "[MARIN PUGA ULISES ISRAEL]\n",
+            "=====================================================\n",
+            "=====================================================\n",
+            "FIN - PRACTICA 3.3 REDUCE CUDA\n",
+            "[ZARATE CASTILLO ANDREA ITZEL]\n",
+            "[MARIN PUGA ULISES ISRAEL]\n",
+            "=====================================================\n"
+          ]
+        }
+      ]
+    }
+  ]
+}
