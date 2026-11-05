@@ -4,8 +4,8 @@ Práctica 3.2: Operaciones Aritméticas Paralelas en GPU (CUDA)
 =====================================================
 
 INTEGRANTES:
-- [Apellido1 Apellido2 Nombre1]
-- [Apellido1 Apellido2 Nombre2]
+Marin Puga Ulises Israel
+Zarate Castillo Andrea Itzel
 
 REQUISITOS PREVIOS:
 - Entorno con soporte para CUDA C/C++ (Local o Google Colab).
