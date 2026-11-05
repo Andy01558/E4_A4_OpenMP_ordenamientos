@@ -1,0 +1,39 @@
+=====================================================
+INSTRUCCIONES DE COMPILACIÓN Y EJECUCIÓN
+Práctica 3.2: Operaciones Aritméticas Paralelas en GPU (CUDA)
+=====================================================
+
+INTEGRANTES:
+- [Apellido1 Apellido2 Nombre1]
+- [Apellido1 Apellido2 Nombre2]
+
+REQUISITOS PREVIOS:
+- Entorno con soporte para CUDA C/C++ (Local o Google Colab).
+- GPU NVIDIA compatible (para este proyecto se utilizó una Tesla T4 en Google Colab).
+- El archivo fuente se llama: practica3_2_final.cu (o el nombre del archivo .cu que hayas subido).
+
+INSTRUCCIONES PARA GOOGLE COLAB:
+1. Abrir un nuevo cuaderno en Google Colab.
+2. Ir a Entorno de ejecución > Cambiar tipo de entorno de ejecución y seleccionar "T4 GPU".
+3. Subir el archivo .cu a la sesión (arrastrándolo a la carpeta o usando la celda mágica %%writefile).
+4. Ejecutar los siguientes comandos en una celda de código:
+   
+   !nvcc practica3_2_final.cu -o practica3_2_final
+   !./practica3_2_final
+
+5. El programa ejecutará automáticamente las dos pruebas (40 elementos y 100,000 elementos) y mostrará los tiempos en pantalla.
+
+INSTRUCCIONES PARA ENTORNO LOCAL (Windows/Linux):
+1. Asegurarse de tener instalado el CUDA Toolkit y el compilador nvcc.
+2. Abrir una terminal (CMD o Bash).
+3. Navegar a la carpeta donde se encuentra el archivo .cu.
+4. Compilar con el comando:
+   
+   nvcc practica3_2_final.cu -o practica3_2_final
+
+5. Ejecutar el programa:
+   - En Windows: .\practica3_2_final.exe
+   - En Linux: ./practica3_2_final
+
+NOTA: La prueba masiva original requería 4,000,000 de elementos, pero se ajustó a 100,000 (o 40) debido a limitaciones de memoria de la versión gratuita de Google Colab, tal como se documenta en el reporte PDF.
+=====================================================
